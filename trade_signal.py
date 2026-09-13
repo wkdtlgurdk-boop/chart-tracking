@@ -148,6 +148,9 @@ def send(cfg, text, dry_run):
 
 # ---------------------------------------------------------------- 관심종목
 
+ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u2060\ufeff]")  # 복사·붙여넣기로 딸려오는 보이지 않는 문자
+
+
 def norm(s):
     return "".join(s.split()).upper()
 
@@ -157,7 +160,7 @@ def read_watchlist():
         return []
     items = []
     for line in WATCHLIST_PATH.read_text(encoding="utf-8").splitlines():
-        kw = line.split("#", 1)[0].strip()
+        kw = ZERO_WIDTH.sub("", line.split("#", 1)[0]).strip()
         if kw and kw not in items:
             items.append(kw)
     return items
@@ -403,7 +406,7 @@ def process_commands(cfg, state):
     for upd in resp.get("result", []):
         state["update_offset"] = upd["update_id"] + 1
         msg = upd.get("message") or {}
-        text = (msg.get("text") or "").strip()
+        text = ZERO_WIDTH.sub("", msg.get("text") or "").strip()
         if str((msg.get("chat") or {}).get("id")) != str(cfg["chat_id"]) or not text:
             continue
         log(f"명령 수신: {text[:60]}")
