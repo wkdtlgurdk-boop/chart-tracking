@@ -1,0 +1,9 @@
+{
+  "scan_after": "15:40",
+  "new_high_days": 20,
+  "new_high_basis": "close",
+  "pullback_ma_days": [20, 60],
+  "pullback_band_pct": [-1.0, 3.0],
+  "falling_filter_days": 3,
+  "notify_when_empty": true
+}

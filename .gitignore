@@ -1,0 +1,4 @@
+config.local.json
+trade_signal.log
+.lock
+__pycache__/

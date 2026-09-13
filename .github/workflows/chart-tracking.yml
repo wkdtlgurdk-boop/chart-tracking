@@ -1,0 +1,47 @@
+name: chart-tracking
+
+on:
+  schedule:
+    # 평일 KST 08:05~19:35, 30분마다 — 텔레그램 명령 처리 (15:40 이후 첫 실행에서 스캔도 함)
+    - cron: "5,35 23 * * 0-4"
+    - cron: "5,35 0-10 * * 1-5"
+    # 장 마감 직후 스캔 (KST 15:42) — 늦거나 빠지면 16:05 / 16:35 실행이 대신 보냄
+    - cron: "42 6 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "지금 바로 스캔 (시간·휴장일·중복 체크 무시)"
+        type: boolean
+        default: false
+
+# 실행이 겹치지 않게 한 줄로 세움 (watchlist.txt / state.json 커밋 충돌 방지)
+concurrency:
+  group: chart-tracking
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan & Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 trade_signal.py ${{ inputs.force && '--force' || '' }}
+
+      - name: Save watchlist/state
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add watchlist.txt state.json
+          git diff --cached --quiet && exit 0
+          git commit -m "update watchlist/state"
+          git pull --rebase
+          git push
