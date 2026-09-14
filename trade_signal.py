@@ -10,7 +10,7 @@
 
 데이터: stock.naver.com 의 비공식 read-only 엔드포인트 (공식 API 아님 — 구조가 바뀌면 실패할 수 있음)
 
-GitHub Actions(.github/workflows/chart-tracking.yml)가 평일 매시 5분 + 15:42 에 실행합니다.
+GitHub Actions(.github/workflows/chart-tracking.yml)가 평일 매시 15분 + 15:42, 주말 6시간마다(명령만) 실행합니다.
   장중(intraday_start~intraday_end) : 시간당 1번 현재가로 스캔, 신호 있을 때만 발송
   scan_after 이후                   : 하루 1번 종가 알림 (신호 없어도 발송)
   같은 종목은 하루 한 번만 알림 (/scan 강제 실행은 예외)
@@ -67,7 +67,7 @@ HELP = (
     "• /del 종목명 (또는 -종목명) → 삭제\n"
     "• /list → 관심종목 보기\n"
     "• /scan → 지금 바로 스캔\n"
-    "명령은 평일 08~19시 매시 5분에 처리됩니다."
+    "명령은 평일 08~19시 매시 15분(보통 10~20분 늦음), 주말 6시간마다 처리됩니다."
 )
 
 
@@ -261,6 +261,9 @@ def scan(cfg, state, dry_run, force):
     now = datetime.now(KST)
     today = now.strftime("%Y%m%d")
     hhmm, slot = now.strftime("%H:%M"), now.strftime("%Y%m%d%H")
+    if not force and now.weekday() >= 5:
+        log("주말 — 명령만 처리")
+        return
     if force:
         mode = "force"
     elif hhmm >= cfg["scan_after"]:
