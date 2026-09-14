@@ -60,5 +60,11 @@
       "code": "278470",
       "name": "에이피알"
     }
+  },
+  "last_intraday_slot": "2026091410",
+  "today_signals": {
+    "date": "20260914",
+    "scanned": true,
+    "keys": []
   }
 }
