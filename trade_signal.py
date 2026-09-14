@@ -6,7 +6,7 @@
   20일 눌림   : 오늘 종가가 20일 이동평균 대비 -1% ~ +3%
   60일 눌림   : 오늘 종가가 60일 이동평균 대비 -1% ~ +3%
   눌림 공통   : 오늘 종가 < 1~3일 전 종가 평균 이면 '내려오는 차트'로 보고 제외
-               20일선 > 60일선 정배열일 때만 (config pullback_align_ma, 예: [20, 60, 120])
+  정배열 필수 : 20일 눌림은 5 > 20 > 60, 60일 눌림은 20 > 60 > 120 (config pullback_align_ma)
 
 데이터: stock.naver.com 의 비공식 read-only 엔드포인트 (공식 API 아님 — 구조가 바뀌면 실패할 수 있음)
 
@@ -57,7 +57,7 @@ DEFAULTS = {
     "pullback_ma_days": [20, 60],
     "pullback_band_pct": [-1.0, 3.0],
     "falling_filter_days": 3,
-    "pullback_align_ma": [20, 60],
+    "pullback_align_ma": {"20": [5, 20, 60], "60": [20, 60, 120]},
     "notify_when_empty": True,
 }
 
@@ -239,18 +239,17 @@ def detect(candles, cfg):
     if len(closes) <= k or close < sum(closes[-k - 1:-1]) / k:
         return hits  # 내려오는 차트 → 눌림 제외
 
-    align = cfg["pullback_align_ma"]
-    if align:
-        if len(closes) < max(align):
-            return hits  # 이평선 계산할 만큼 일봉이 없음 → 정배열 확인 불가, 눌림 제외
-        mas = [sum(closes[-m:]) / m for m in align]
-        if any(a <= b for a, b in zip(mas, mas[1:])):
-            return hits  # 정배열 아님 → 눌림 제외
-
     lo, hi = cfg["pullback_band_pct"]
     for m in cfg["pullback_ma_days"]:
         if len(closes) < m:
             continue
+        align = cfg["pullback_align_ma"].get(str(m), [])
+        if align:
+            if len(closes) < max(align):
+                continue  # 이평선 계산할 만큼 일봉이 없음 → 정배열 확인 불가
+            mas = [sum(closes[-a:]) / a for a in align]
+            if any(x <= y for x, y in zip(mas, mas[1:])):
+                continue  # 정배열 아님
         ma = sum(closes[-m:]) / m
         gap = (close / ma - 1) * 100
         if lo <= gap <= hi:
@@ -286,7 +285,8 @@ def scan(cfg, state, dry_run, force):
         return
 
     cache = state.setdefault("resolved", {})
-    days = max(cfg["new_high_days"] + 1, *cfg["pullback_ma_days"], *cfg["pullback_align_ma"],
+    align_days = [a for mas in cfg["pullback_align_ma"].values() for a in mas]
+    days = max(cfg["new_high_days"] + 1, *cfg["pullback_ma_days"], *align_days,
                cfg["falling_filter_days"] + 1) + 5
     groups, unresolved, failed, seen = {}, [], [], set()
     scanned, latest, found_keys = 0, "", []
