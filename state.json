@@ -61,10 +61,14 @@
       "name": "에이피알"
     }
   },
-  "last_intraday_slot": "2026091410",
+  "last_intraday_slot": "2026091411",
   "today_signals": {
     "date": "20260914",
     "scanned": true,
-    "keys": []
+    "keys": [
+      "007070|60일 눌림",
+      "010140|20일 눌림",
+      "352820|20일 눌림"
+    ]
   }
 }
