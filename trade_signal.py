@@ -13,7 +13,7 @@
 GitHub Actions(.github/workflows/chart-tracking.yml)가 평일 매시 5분 + 15:42 에 실행합니다.
   장중(intraday_start~intraday_end) : 시간당 1번 현재가로 스캔, 신호 있을 때만 발송
   scan_after 이후                   : 하루 1번 종가 알림 (신호 없어도 발송)
-  그날 두 번째 스캔부터 새로 생긴 신호에 🆕
+  같은 종목은 하루 한 번만 알림 (/scan 강제 실행은 예외)
 
 사용법
   python trade_signal.py                  텔레그램 명령 처리 + (시간대에 맞으면) 스캔·발송
@@ -289,11 +289,11 @@ def scan(cfg, state, dry_run, force):
     days = max(cfg["new_high_days"] + 1, *cfg["pullback_ma_days"], *align_days,
                cfg["falling_filter_days"] + 1) + 5
     groups, unresolved, failed, seen = {}, [], [], set()
-    scanned, latest, found_keys = 0, "", []
-    # 오늘 이미 알린 신호 — 그날 두 번째 스캔부터 새로 생긴 신호에 🆕 표시
-    today_seen = state.get("today_signals") or {}
-    if today_seen.get("date") != today:
-        today_seen = {"date": today, "scanned": False, "keys": []}
+    scanned, latest, found_codes, already = 0, "", set(), []
+    # 같은 종목은 하루 한 번만 알림 (/scan 강제 실행은 예외)
+    alerted = state.get("alerted_today") or {}
+    if alerted.get("date") != today:
+        alerted = {"date": today, "codes": []}
 
     for kw in keywords:
         try:
@@ -322,12 +322,14 @@ def scan(cfg, state, dry_run, force):
         scanned += 1
         latest = max(latest, candles[-1]["date"])
         t = candles[-1]
-        for label, detail in detect(candles, cfg):
-            key = f"{info['code']}|{label}"
-            mark = "🆕 " if today_seen["scanned"] and key not in today_seen["keys"] else ""
-            found_keys.append(key)
+        hits = detect(candles, cfg)
+        if hits and mode != "force" and info["code"] in alerted["codes"]:
+            already.append(info["name"])
+            continue
+        for label, detail in hits:
+            found_codes.add(info["code"])
             groups.setdefault(label, []).append(
-                f"• {mark}{info['name']} {t['close']:,.0f}원 ({t['rate']:+.2f}%) — {detail}")
+                f"• {info['name']} {t['close']:,.0f}원 ({t['rate']:+.2f}%) — {detail}")
 
     if not scanned:
         log(f"스캔된 종목 없음 (못 찾음 {unresolved}, 실패 {failed})")
@@ -345,8 +347,8 @@ def scan(cfg, state, dry_run, force):
             state["last_sent_date"] = today
         else:
             state["last_intraday_slot"] = slot
-        state["today_signals"] = {"date": today, "scanned": True,
-                                  "keys": sorted(set(today_seen["keys"]) | set(found_keys))}
+        state.pop("today_signals", None)  # 예전 🆕 표시용 키
+        state["alerted_today"] = {"date": today, "codes": sorted(set(alerted["codes"]) | found_codes)}
 
     d = datetime.strptime(latest, "%Y%m%d")
     live = latest == today and (now.hour, now.minute) < (15, 30)
@@ -359,11 +361,11 @@ def scan(cfg, state, dry_run, force):
             parts.extend(groups[label])
     if not groups:
         if mode == "intraday" or (mode == "close" and not cfg["notify_when_empty"]):
-            log(f"조건 충족 없음 ({scanned}종목) — 발송 안 함")
+            log(f"새로 알릴 신호 없음 ({scanned}종목, 오늘 이미 알림 {len(already)}) — 발송 안 함")
             mark_done()
             return
-        parts.append("\n조건을 만족한 종목이 없습니다.")
-    parts.append(f"\n관심 {scanned}종목 스캔")
+        parts.append("\n새로 알릴 종목이 없습니다.")
+    parts.append(f"\n관심 {scanned}종목 스캔" + (f" · 오늘 이미 알린 {len(already)}종목 제외" if already else ""))
     if unresolved:
         parts.append(f"⚠️ 종목을 못 찾음: {', '.join(unresolved)}")
     if failed:
