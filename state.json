@@ -65,14 +65,10 @@
       "name": "고영"
     }
   },
-  "last_intraday_slot": "2026091415",
+  "last_intraday_slot": "2026091510",
   "alerted_today": {
-    "date": "20260914",
-    "codes": [
-      "007070",
-      "010140",
-      "352820"
-    ]
+    "date": "20260915",
+    "codes": []
   },
   "last_sent_date": "20260914",
   "update_offset": 284921137
