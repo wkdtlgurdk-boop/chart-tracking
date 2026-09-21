@@ -8,7 +8,9 @@
   눌림 공통   : 오늘 종가 < 1~3일 전 종가 평균 이면 '내려오는 차트'로 보고 제외
   정배열 필수 : 20일 눌림은 5 > 20 > 60, 60일 눌림은 20 > 60 > 120 (config pullback_align_ma)
 
-데이터: stock.naver.com 의 비공식 read-only 엔드포인트 (공식 API 아님 — 구조가 바뀌면 실패할 수 있음)
+데이터: 네이버의 비공식 read-only 엔드포인트 (공식 API 아님 — 구조가 바뀌면 실패할 수 있음)
+        종목명 해석은 stock.naver.com, 일봉은 api.stock.naver.com.
+        2026-09-21 에 일봉 경로가 404 로 사라져 옮겼다. check_endpoints.py 로 확인할 수 있다.
 
 GitHub Actions(.github/workflows/chart-tracking.yml)가 평일 매시 15분 + 15:42, 주말 6시간마다(명령만) 실행합니다.
   장중(intraday_start~intraday_end) : 시간당 1번 현재가로 스캔, 신호 있을 때만 발송
@@ -42,7 +44,8 @@ LOG_PATH = BASE / "trade_signal.log"
 LOCK_PATH = BASE / ".lock"
 
 KST = timezone(timedelta(hours=9))
-NAVER = "https://stock.naver.com"
+NAVER = "https://stock.naver.com"          # 종목명 해석(autocomplete)
+CHART = "https://api.stock.naver.com"      # 일봉. 아래 fetch_daily 주석 참고
 WEEKDAYS = "월화수목금토일"
 WATCHLIST_HEADER = "# 관심종목 — 한 줄에 하나씩 종목명(또는 6자리 코드). '#' 뒤는 무시됩니다.\n"
 
@@ -117,7 +120,7 @@ class FileLock:
 
 def http_json(url, payload=None, timeout=20):
     headers = {"User-Agent": "Mozilla/5.0 trade-signal/1.0", "Accept": "application/json, text/plain, */*"}
-    if url.startswith(NAVER):
+    if url.startswith(NAVER) or url.startswith(CHART):
         headers["Referer"] = NAVER + "/"
     data = None
     if payload is not None:
@@ -206,18 +209,52 @@ def resolve(keyword, cache):
 # ---------------------------------------------------------------- 차트 조건
 
 def fetch_daily(code, days):
-    rows = http_json(f"{NAVER}/api/domestic/detail/{code}/siseDay?pageSize={days}")
+    """일봉 days 거래일치. 오래된 것부터.
+
+    2026-09-21 에 경로를 옮겼다. 그 전까지 쓰던
+    stock.naver.com/api/domestic/detail/{code}/siseDay 가 404 를 준다 —
+    "Route GET:/api/domestic/detail/.../siseDay not found". 네이버가 라우트를
+    지운 것이라 재시도로는 안 살아난다. 종목명 해석(autocomplete)은 그대로
+    200 이어서, 스캔이 '못 찾음' 없이 18종목 전부 '조회 실패'로 죽었다.
+
+    새 경로는 날짜 범위를 받는다. 거래일 수를 달력 날짜로 바꿔야 하는데,
+    주말만 쳐도 7/5 배이고 연휴가 겹치면 더 빈다. 넉넉히 잡아 두고 뒤에서
+    필요한 만큼만 잘라 쓴다 — 모자라게 받으면 120일선이 조용히 짧아져서
+    정배열 판정이 틀린다.
+    """
+    span = int(days) * 2 + 30
+    start = (datetime.now(KST) - timedelta(days=span)).strftime("%Y%m%d0000")
+    end = datetime.now(KST).strftime("%Y%m%d0000")
+    rows = http_json(f"{CHART}/chart/domestic/item/{code}/day"
+                     f"?startDateTime={start}&endDateTime={end}")
+    if not isinstance(rows, list):
+        raise RuntimeError(f"일봉 응답이 목록이 아님: {str(rows)[:200]}")
 
     def num(v):
         return float(str(v).replace(",", "") or 0)
 
-    candles = [
-        {"date": r["bizdate"], "high": num(r["highPrice"]), "close": num(r["closePrice"]),
-         "rate": num(r.get("prevChangeRate") or 0)}
-        for r in rows
-    ]
+    candles = []
+    for r in rows:
+        close = num(r.get("closePrice"))
+        volume = num(r.get("accumulatedTradingVolume"))
+        date = r.get("localDate")
+        # 거래량 0 인 봉은 버린다. 휴장 전후에 값이 빈 '오늘 봉'이 섞여 오는데,
+        # 그걸 오늘로 삼으면 종가가 0 이 되어 전 종목이 신호를 낸 것처럼 보인다.
+        if not date or close <= 0 or volume <= 0:
+            continue
+        candles.append({"date": str(date), "high": num(r.get("highPrice")) or close,
+                        "close": close, "rate": 0.0})
+    if not candles:
+        raise RuntimeError(f"쓸 수 있는 일봉이 없음 (받은 행 {len(rows)})")
     candles.sort(key=lambda c: c["date"])
-    return candles
+
+    # 새 경로는 전일비를 안 준다. 직접 계산한다 — 알림 본문에만 쓰이고
+    # 신호 판정에는 안 쓰이므로 첫 봉은 0 으로 둔다.
+    for i in range(1, len(candles)):
+        prev = candles[i - 1]["close"]
+        if prev:
+            candles[i]["rate"] = (candles[i]["close"] / prev - 1) * 100
+    return candles[-int(days):]
 
 
 def detect(candles, cfg):
