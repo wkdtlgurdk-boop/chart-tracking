@@ -3,10 +3,13 @@
 
 차트 조건 (일봉)
   20일 신고가 : 오늘 종가 > 직전 20거래일 최고 종가   (config new_high_basis="high" 이면 고가 기준)
+                단 60일선 대비 +30% 넘게 떠 있으면 제외 (max_breakout_extension)
   20일 눌림   : 오늘 종가가 20일 이동평균 대비 -1% ~ +3%
   60일 눌림   : 오늘 종가가 60일 이동평균 대비 -1% ~ +3%
   눌림 공통   : 오늘 종가 < 1~3일 전 종가 평균 이면 '내려오는 차트'로 보고 제외
   정배열 필수 : 20일 눌림은 5 > 20 > 60, 60일 눌림은 20 > 60 > 120 (config pullback_align_ma)
+  회복돌파    : 20/60일선을 3거래일 이하 내줬다가 되찾고 오늘 +3% 이상. 5<20<60 역배열 제외.
+                눌림이 잡힌 종목엔 붙이지 않는다. (신고가 과열 컷과 함께 tradesignal 규칙을 가져옴)
 
 데이터: 네이버의 비공식 read-only 엔드포인트 (공식 API 아님 — 구조가 바뀌면 실패할 수 있음)
         종목명 해석은 stock.naver.com, 일봉은 api.stock.naver.com.
@@ -63,6 +66,14 @@ DEFAULTS = {
     "pullback_band_pct": [-1.0, 3.0],
     "falling_filter_days": 3,
     "pullback_align_ma": {"20": [5, 20, 60], "60": [20, 60, 120]},
+    # 아래 셋은 tradesignal(volume-surge-telegram-bot/tradesignal/signals.py)에서 가져왔다.
+    # 신고가여도 60일선 위로 이만큼 넘게 떠 있으면 알리지 않는다. 손절선이 한참 아래라서다.
+    "max_breakout_extension": 30.0,
+    # 회복돌파: 기준선을 recovery_days 거래일 이하로 내줬다가 되찾고, 오늘 선 위에서
+    # recovery_min_change% 이상 오른 자리. 이탈은 최근 recovery_lookback 봉 안에서 찾는다.
+    "recovery_days": 3,
+    "recovery_lookback": 10,
+    "recovery_min_change": 3.0,
     "notify_when_empty": True,
 }
 
@@ -259,11 +270,34 @@ def fetch_daily(code, days):
     return candles[-int(days):]
 
 
+def recovery_run(closes, m, lookback):
+    """최근 lookback 봉에서 m일선 이탈이 몇 봉 이어졌다가 끝났나. 오늘 선 아래거나 이탈이 없으면 None.
+
+    이탈은 그날까지의 봉으로 낸 그날의 선으로 판정한다 — 오늘 선으로 과거를 재면
+    그때 실제로 뚫렸는지와 다른 답이 나온다. 세는 것은 '마지막 이탈 이후 며칠'이 아니라
+    이탈 구간의 길이다(마지막 이탈 다음 봉은 정의상 선 위라 앞엣것은 늘 1이 나온다).
+    """
+    flags = []
+    for i in range(max(len(closes) - lookback, m - 1), len(closes)):
+        flags.append(closes[i] < sum(closes[i - m + 1:i + 1]) / m)
+    if not flags or flags[-1] or not any(flags):
+        return None
+    idx = max(i for i, x in enumerate(flags) if x)
+    run = 0
+    while idx >= 0 and flags[idx]:
+        run += 1
+        idx -= 1
+    return run
+
+
 def detect(candles, cfg):
     closes = [c["close"] for c in candles]
     today = candles[-1]
     close = today["close"]
     hits = []
+
+    def ma_of(d):
+        return sum(closes[-d:]) / d if len(closes) >= d else None
 
     n = cfg["new_high_days"]
     if len(candles) > n:
@@ -272,12 +306,37 @@ def detect(candles, cfg):
         else:
             ref, value = max(closes[-n - 1:-1]), close
         if value > ref:
-            hits.append((f"{n}일 신고가", f"직전 {n}일 최고 {ref:,.0f}"))
+            # 60일선에서 너무 멀어진 신고가는 알리지 않는다. 60봉이 안 되면 막지 않는다.
+            ma60 = ma_of(60)
+            ext = (close / ma60 - 1) * 100 if ma60 else None
+            if ext is None or ext <= cfg["max_breakout_extension"]:
+                hits.append((f"{n}일 신고가", f"직전 {n}일 최고 {ref:,.0f}"))
+
+    # 5<20<60 역배열이면 회복돌파로 치지 않는다 — 하락 추세 중의 반등이다.
+    ma5, ma20, ma60 = ma_of(5), ma_of(20), ma_of(60)
+    downtrend = None not in (ma5, ma20, ma60) and ma5 < ma20 < ma60
 
     k = cfg["falling_filter_days"]
-    if len(closes) <= k or close < sum(closes[-k - 1:-1]) / k:
-        return hits  # 내려오는 차트 → 눌림 제외
+    falling = len(closes) <= k or close < sum(closes[-k - 1:-1]) / k
+    if not falling:  # 내려오는 차트면 눌림 제외
+        hits.extend(pullbacks(closes, close, cfg))
 
+    # 회복돌파는 눌림 뒤에 본다. 띠 안이면 눌림이 먼저 잡으므로 여기 오는 것은 띠 위로 튄 날이다.
+    if not any(label.endswith("눌림") for label, _ in hits) and not downtrend \
+            and today["rate"] >= cfg["recovery_min_change"]:
+        for m in cfg["pullback_ma_days"]:
+            ma = ma_of(m)
+            if not ma or close <= ma:
+                continue
+            run = recovery_run(closes, m, cfg["recovery_lookback"])
+            if run is not None and run <= cfg["recovery_days"]:
+                hits.append(("회복돌파", f"{m}일선 {run}일 이탈 후 회복 {(close / ma - 1) * 100:+.1f}%"))
+                break
+    return hits
+
+
+def pullbacks(closes, close, cfg):
+    hits = []
     lo, hi = cfg["pullback_band_pct"]
     for m in cfg["pullback_ma_days"]:
         if len(closes) < m:
@@ -400,7 +459,7 @@ def scan(cfg, state, dry_run, force):
     live = latest == today and f"{now:%H:%M}" < cfg["intraday_end"]
     basis = f"{now:%H:%M} 장중 현재가" if live else "종가"
     parts = [f"📡 Trade Signal · {d:%m/%d}({WEEKDAYS[d.weekday()]}) {basis} 기준"]
-    order = [f"{cfg['new_high_days']}일 신고가"] + [f"{m}일 눌림" for m in cfg["pullback_ma_days"]]
+    order = [f"{cfg['new_high_days']}일 신고가"] + [f"{m}일 눌림" for m in cfg["pullback_ma_days"]] + ["회복돌파"]
     for label in order:
         if groups.get(label):
             parts.append(f"\n[{label}] {len(groups[label])}종목")
