@@ -9,7 +9,7 @@
   눌림 공통   : 오늘 종가 < 1~3일 전 종가 평균 이면 '내려오는 차트'로 보고 제외
   정배열 필수 : 20일 눌림은 5 > 20 > 60, 60일 눌림은 20 > 60 > 120 (config pullback_align_ma)
   회복돌파    : 20/60일선을 3거래일 이하 내줬다가 되찾고 오늘 +3% 이상. 5<20<60 역배열 제외.
-                눌림이 잡힌 종목엔 붙이지 않는다. (신고가 과열 컷과 함께 tradesignal 규칙을 가져옴)
+                신고가·눌림이 잡힌 종목엔 붙이지 않는다. (신고가 과열 컷과 함께 tradesignal 규칙을 가져옴)
 
 데이터: 네이버의 비공식 read-only 엔드포인트 (공식 API 아님 — 구조가 바뀌면 실패할 수 있음)
         종목명 해석은 stock.naver.com, 일봉은 api.stock.naver.com.
@@ -321,8 +321,9 @@ def detect(candles, cfg):
     if not falling:  # 내려오는 차트면 눌림 제외
         hits.extend(pullbacks(closes, close, cfg))
 
-    # 회복돌파는 눌림 뒤에 본다. 띠 안이면 눌림이 먼저 잡으므로 여기 오는 것은 띠 위로 튄 날이다.
-    if not any(label.endswith("눌림") for label, _ in hits) and not downtrend \
+    # 회복돌파는 맨 뒤에 본다 (tradesignal 과 같은 우선순위: 신고가 → 눌림 → 회복돌파).
+    # 띠 안이면 눌림이 먼저 잡으므로 여기 오는 것은 띠 위로 튄 날이다.
+    if not hits and not downtrend \
             and today["rate"] >= cfg["recovery_min_change"]:
         for m in cfg["pullback_ma_days"]:
             ma = ma_of(m)
