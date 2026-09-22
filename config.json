@@ -1,7 +1,7 @@
 {
   "intraday_start": "10:00",
-  "intraday_end": "15:30",
-  "scan_after": "15:40",
+  "intraday_end": "20:00",
+  "scan_after": "20:10",
   "new_high_days": 20,
   "new_high_basis": "close",
   "pullback_ma_days": [20, 60],

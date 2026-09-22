@@ -12,7 +12,7 @@
         종목명 해석은 stock.naver.com, 일봉은 api.stock.naver.com.
         2026-09-21 에 일봉 경로가 404 로 사라져 옮겼다. check_endpoints.py 로 확인할 수 있다.
 
-GitHub Actions(.github/workflows/chart-tracking.yml)가 평일 매시 15분 + 15:42, 주말 6시간마다(명령만) 실행합니다.
+GitHub Actions(.github/workflows/chart-tracking.yml)가 평일 매시 15분 + 20:10, 주말 6시간마다(명령만) 실행합니다.
   장중(intraday_start~intraday_end) : 시간당 1번 현재가로 스캔, 신호 있을 때만 발송
   scan_after 이후                   : 하루 1번 종가 알림 (신호 없어도 발송)
   같은 종목은 하루 한 번만 알림 (/scan 강제 실행은 예외)
@@ -53,8 +53,10 @@ DEFAULTS = {
     "bot_token": "",
     "chat_id": "",
     "intraday_start": "10:00",
-    "intraday_end": "15:30",
-    "scan_after": "15:40",
+    # KRX 정규장 마감. 15:30 이었다가 거래시간이 늘면서 20:00 이 됐다.
+    # 이 값이 곧 '아직 장중인가'의 기준선이고, scan_after 는 그 뒤에 온다.
+    "intraday_end": "20:00",
+    "scan_after": "20:10",
     "new_high_days": 20,
     "new_high_basis": "close",
     "pullback_ma_days": [20, 60],
@@ -391,7 +393,11 @@ def scan(cfg, state, dry_run, force):
         state["alerted_today"] = {"date": today, "codes": sorted(set(alerted["codes"]) | found_codes)}
 
     d = datetime.strptime(latest, "%Y%m%d")
-    live = latest == today and (now.hour, now.minute) < (15, 30)
+    # 장중인지는 intraday_end 하나로 정한다. 예전에는 여기에 (15, 30) 이
+    # 따로 박혀 있었는데, 거래시간이 20:00 으로 늘어난 뒤 이 줄만 남아
+    # 18:57 실행이 "종가 기준"이라고 적었다 -- 아직 두 시간 남은 시각이다.
+    # 같은 값을 두 군데 두면 한쪽만 고치고 끝난다.
+    live = latest == today and f"{now:%H:%M}" < cfg["intraday_end"]
     basis = f"{now:%H:%M} 장중 현재가" if live else "종가"
     parts = [f"📡 Trade Signal · {d:%m/%d}({WEEKDAYS[d.weekday()]}) {basis} 기준"]
     order = [f"{cfg['new_high_days']}일 신고가"] + [f"{m}일 눌림" for m in cfg["pullback_ma_days"]]
