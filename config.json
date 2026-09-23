@@ -2,11 +2,5 @@
   "intraday_start": "10:00",
   "intraday_end": "20:00",
   "scan_after": "20:10",
-  "new_high_days": 20,
-  "new_high_basis": "close",
-  "pullback_ma_days": [20, 60],
-  "pullback_band_pct": [-1.0, 3.0],
-  "falling_filter_days": 3,
-  "pullback_align_ma": {"20": [5, 20, 60], "60": [20, 60, 120]},
   "notify_when_empty": true
 }
