@@ -1,17 +1,7 @@
 #!/usr/bin/env python3
 """Trade Signal — 관심종목이 지정한 차트를 만들면 텔레그램(@Tradesignal_GD_bot)으로 알림.
 
-차트 조건 (일봉)
-  20일 신고가 : 오늘 종가 > 직전 20거래일 최고 종가   (config new_high_basis="high" 이면 고가 기준)
-                단 60일선 대비 +30% 넘게 떠 있으면 제외 (max_breakout_extension)
-  20일 눌림   : 오늘 종가가 20일 이동평균 대비 -1% ~ +5%
-  60일 눌림   : 오늘 종가가 60일 이동평균 대비 -1% ~ +5%
-  눌림 꼬리   : 윗꼬리가 달리면 제외, 아랫꼬리가 달리면 상한을 +7% 까지 연다
-  눌림 공통   : 오늘 종가 < 1~3일 전 종가 평균 이면 '내려오는 차트'로 보고 제외
-  정배열 필수 : 20일 눌림은 5 > 20 > 60, 60일 눌림은 20 > 60 > 120 (config pullback_align_ma)
-  20일선 회복 : 오늘 종가가 20일선 대비 -3% ~ 0% (선 바로 아래), 오늘 상승 마감 + 전날 상승 또는 보합(±1%),
-                20 > 60 > 120 정배열. '내려오는 차트' 제외는 눌림과 같다. 20일 눌림이 잡히면 붙이지 않는다.
-  (신고가 과열 컷은 tradesignal 규칙을 가져옴)
+차트 조건은 chart_rules.py 에 있다 (tradesignal 과 같은 파일, 맨 위 설명 참고).
 
 데이터: 네이버의 비공식 read-only 엔드포인트 (공식 API 아님 — 구조가 바뀌면 실패할 수 있음)
         종목명 해석은 stock.naver.com, 일봉은 api.stock.naver.com.
@@ -42,6 +32,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import chart_rules
+
 BASE = Path(__file__).resolve().parent
 CONFIG_PATH = BASE / "config.json"
 LOCAL_CONFIG_PATH = BASE / "config.local.json"  # 봇 토큰 (git 에 안 올림). GitHub 에서는 환경변수로 받음
@@ -64,33 +56,6 @@ DEFAULTS = {
     # 이 값이 곧 '아직 장중인가'의 기준선이고, scan_after 는 그 뒤에 온다.
     "intraday_end": "20:00",
     "scan_after": "20:10",
-    "new_high_days": 20,
-    "new_high_basis": "close",
-    "pullback_ma_days": [20, 60],
-    "pullback_band_pct": [-1.0, 5.0],
-    # 눌림 꼬리. 윗꼬리는 위에서 판 물량이 있었다는 뜻이라 눌림에서 뺀다. 아랫꼬리는
-    # 아래에서 받친 매수가 있었다는 뜻이라 상한을 pullback_lower_wick_max 까지 연다.
-    # 꼬리로 치는 기준: 몸통 × wick_body_ratio 이상이고 종가의 wick_min_pct% 이상.
-    # 둘 다 달렸으면 긴 쪽으로 본다.
-    "pullback_lower_wick_max": 7.0,
-    "wick_body_ratio": 1.0,
-    "wick_min_pct": 2.0,
-    "falling_filter_days": 3,
-    "pullback_align_ma": {"20": [5, 20, 60], "60": [20, 60, 120]},
-    # 아래 셋은 tradesignal(volume-surge-telegram-bot/tradesignal/signals.py)에서 가져왔다.
-    # 신고가여도 60일선 위로 이만큼 넘게 떠 있으면 알리지 않는다. 손절선이 한참 아래라서다.
-    "max_breakout_extension": 30.0,
-    # 20일선 회복: 20일선 바로 아래(reclaim_band_pct)에서 reclaim_up_days 일 연속 상승 마감하며
-    # 선으로 다가오는 자리. 20일 눌림은 5>20>60 을 요구해서, 선 아래로 눌려 5일선이
-    # 20일선 밑으로 내려간 종목은 못 잡는다(메가터치 8/31~9/08). 그 자리를 여기서 본다.
-    # 대신 중장기 추세는 20>60>120 정배열로 확인한다.
-    "reclaim_ma_days": 20,
-    "reclaim_band_pct": [-3.0, 0.0],
-    "reclaim_up_days": 2,
-    # 앞선 날들은 보합(±reclaim_flat_pct%)이어도 된다. 오늘은 반드시 상승 마감이어야 한다.
-    # 메가터치 9/07(-0.3%) → 9/08(+3.1%) 같은 '보합 후 상승'을 잡으려고 둔다.
-    "reclaim_flat_pct": 1.0,
-    "reclaim_align_ma": [20, 60, 120],
     "notify_when_empty": True,
 }
 
@@ -289,105 +254,6 @@ def fetch_daily(code, days):
     return candles[-int(days):]
 
 
-def detect(candles, cfg):
-    closes = [c["close"] for c in candles]
-    today = candles[-1]
-    close = today["close"]
-    hits = []
-
-    def ma_of(d):
-        return sum(closes[-d:]) / d if len(closes) >= d else None
-
-    n = cfg["new_high_days"]
-    if len(candles) > n:
-        if cfg["new_high_basis"] == "high":
-            ref, value = max(c["high"] for c in candles[-n - 1:-1]), today["high"]
-        else:
-            ref, value = max(closes[-n - 1:-1]), close
-        if value > ref:
-            # 60일선에서 너무 멀어진 신고가는 알리지 않는다. 60봉이 안 되면 막지 않는다.
-            ma60 = ma_of(60)
-            ext = (close / ma60 - 1) * 100 if ma60 else None
-            if ext is None or ext <= cfg["max_breakout_extension"]:
-                hits.append((f"{n}일 신고가", f"직전 {n}일 최고 {ref:,.0f}"))
-
-    k = cfg["falling_filter_days"]
-    falling = len(closes) <= k or close < sum(closes[-k - 1:-1]) / k
-    if not falling:  # 내려오는 차트면 눌림 제외
-        hits.extend(pullbacks(closes, close, cfg, wick(today, cfg)))
-
-        if not any(label == f"{cfg['reclaim_ma_days']}일 눌림" for label, _ in hits):
-            hits.extend(reclaim(closes, close, cfg))
-    return hits
-
-
-def reclaim(closes, close, cfg):
-    """20일선 회복. 선 바로 아래에서 이틀 연속 오르며(앞날은 보합도 된다) 선으로 다가오는 자리."""
-    m, k = cfg["reclaim_ma_days"], cfg["reclaim_up_days"]
-    align = cfg["reclaim_align_ma"]
-    if len(closes) < max(m, k + 1, *align):
-        return []
-    mas = [sum(closes[-a:]) / a for a in align]
-    if any(x <= y for x, y in zip(mas, mas[1:])):
-        return []  # 정배열 아님
-    if closes[-1] <= closes[-2]:
-        return []  # 오늘 상승 마감이 아님
-    floor = 1 - cfg["reclaim_flat_pct"] / 100
-    if any(closes[-i] < closes[-i - 1] * floor for i in range(2, k + 1)):
-        return []  # 앞선 날이 보합 밖으로 밀렸다
-    ma = sum(closes[-m:]) / m
-    gap = (close / ma - 1) * 100
-    lo, hi = cfg["reclaim_band_pct"]
-    if not lo <= gap <= hi:
-        return []
-    return [(f"{m}일선 회복", f"{m}일선 {ma:,.0f} 대비 {gap:+.1f}%")]
-
-
-def wick(candle, cfg):
-    """오늘 봉의 꼬리. "upper" / "lower" / None.
-
-    몸통만으로 재면 도지(시가≈종가)는 1틱 꼬리도 꼬리가 되므로 종가 대비 최소 길이를
-    같이 본다. 장중에는 아직 봉이 다 안 그려졌으므로 그 시각 모양으로 판정한다.
-    """
-    o, h, l, c = candle.get("open"), candle.get("high"), candle.get("low"), candle["close"]
-    if not o or not h or not l:
-        return None
-    body = abs(c - o)
-    upper = h - max(o, c)
-    lower = min(o, c) - l
-    need = max(body * cfg["wick_body_ratio"], c * cfg["wick_min_pct"] / 100)
-    if upper >= need and upper >= lower:
-        return "upper"
-    if lower >= need:
-        return "lower"
-    return None
-
-
-def pullbacks(closes, close, cfg, tail=None):
-    hits = []
-    if tail == "upper":
-        return hits  # 윗꼬리 — 위에서 누르는 물량이 있었다
-    lo, hi = cfg["pullback_band_pct"]
-    if tail == "lower":
-        hi = max(hi, cfg["pullback_lower_wick_max"])
-    for m in cfg["pullback_ma_days"]:
-        if len(closes) < m:
-            continue
-        align = cfg["pullback_align_ma"].get(str(m), [])
-        if align:
-            if len(closes) < max(align):
-                continue  # 이평선 계산할 만큼 일봉이 없음 → 정배열 확인 불가
-            mas = [sum(closes[-a:]) / a for a in align]
-            if any(x <= y for x, y in zip(mas, mas[1:])):
-                continue  # 정배열 아님
-        ma = sum(closes[-m:]) / m
-        gap = (close / ma - 1) * 100
-        if lo <= gap <= hi:
-            note = " · 아랫꼬리" if tail == "lower" else ""
-            hits.append((f"{m}일 눌림", f"{m}일선 {ma:,.0f} 대비 {gap:+.1f}%{note}"))
-    return hits
-
-
 def scan(cfg, state, dry_run, force):
     now = datetime.now(KST)
     today = now.strftime("%Y%m%d")
@@ -419,10 +285,7 @@ def scan(cfg, state, dry_run, force):
         return
 
     cache = state.setdefault("resolved", {})
-    align_days = [a for mas in cfg["pullback_align_ma"].values() for a in mas]
-    days = max(cfg["new_high_days"] + 1, *cfg["pullback_ma_days"], *align_days,
-               *cfg["reclaim_align_ma"], cfg["reclaim_up_days"] + 1,
-               cfg["falling_filter_days"] + 1) + 5
+    days = chart_rules.bars_needed(cfg) + 5
     groups, unresolved, failed, seen = {}, [], [], set()
     scanned, latest, found_codes, already = 0, "", set(), []
     # 같은 종목은 하루 한 번만 알림 (/scan 강제 실행은 예외)
@@ -457,14 +320,14 @@ def scan(cfg, state, dry_run, force):
         scanned += 1
         latest = max(latest, candles[-1]["date"])
         t = candles[-1]
-        hits = detect(candles, cfg)
+        hits = chart_rules.detect(candles, cfg)
         if hits and mode != "force" and info["code"] in alerted["codes"]:
             already.append(info["name"])
             continue
-        for label, detail in hits:
+        for h in hits:
             found_codes.add(info["code"])
-            groups.setdefault(label, []).append(
-                f"• {info['name']} {t['close']:,.0f}원 ({t['rate']:+.2f}%) — {detail}")
+            groups.setdefault(h["label"], []).append(
+                f"• {info['name']} {t['close']:,.0f}원 ({t['rate']:+.2f}%) — {h['detail']}")
 
     if not scanned:
         log(f"스캔된 종목 없음 (못 찾음 {unresolved}, 실패 {failed})")
@@ -493,7 +356,7 @@ def scan(cfg, state, dry_run, force):
     live = latest == today and f"{now:%H:%M}" < cfg["intraday_end"]
     basis = f"{now:%H:%M} 장중 현재가" if live else "종가"
     parts = [f"📡 Trade Signal · {d:%m/%d}({WEEKDAYS[d.weekday()]}) {basis} 기준"]
-    order = [f"{cfg['new_high_days']}일 신고가"] + [f"{m}일 눌림" for m in cfg["pullback_ma_days"]] + [f"{cfg['reclaim_ma_days']}일선 회복"]
+    order = chart_rules.label_order(cfg)
     for label in order:
         if groups.get(label):
             parts.append(f"\n[{label}] {len(groups[label])}종목")
@@ -616,7 +479,7 @@ def main():
     ap.add_argument("--force", action="store_true", help="휴장일·중복 발송 체크 무시")
     args = ap.parse_args()
 
-    cfg = {**DEFAULTS, **load_json(CONFIG_PATH, {}), **load_json(LOCAL_CONFIG_PATH, {})}
+    cfg = chart_rules.merged({**DEFAULTS, **load_json(CONFIG_PATH, {}), **load_json(LOCAL_CONFIG_PATH, {})})
     cfg["bot_token"] = os.environ.get("TELEGRAM_BOT_TOKEN") or cfg["bot_token"]
     cfg["chat_id"] = os.environ.get("TELEGRAM_CHAT_ID") or cfg["chat_id"]
     if not args.dry_run and not (cfg["bot_token"] and cfg["chat_id"]):

@@ -37,6 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 차트 규칙(chart_rules.py)은 tradesignal 과 같은 파일이다. 규칙이 깨졌으면
+      # 틀린 신호를 보내기 전에 여기서 멈춘다.
+      - name: 차트 규칙 시험
+        run: python3 test_chart_rules.py
+
       - name: Scan & Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
