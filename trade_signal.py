@@ -15,7 +15,9 @@
         종목명 해석은 stock.naver.com, 일봉은 api.stock.naver.com.
         2026-09-21 에 일봉 경로가 404 로 사라져 옮겼다. check_endpoints.py 로 확인할 수 있다.
 
-GitHub Actions(.github/workflows/chart-tracking.yml)가 평일 매시 15분 + 20:10, 주말 6시간마다(명령만) 실행합니다.
+Apps Script 가 GitHub Actions(.github/workflows/chart-tracking.yml)를 매시 부릅니다
+(industry-report-telegram-bot/appsscript/dispatch.gs 의 dispatchChartTracking).
+평일 08~21시, 주말은 명령만 처리하려고 6시간 간격으로 셋만 엽니다.
   장중(intraday_start~intraday_end) : 시간당 1번 현재가로 스캔, 신호 있을 때만 발송
   scan_after 이후                   : 하루 1번 종가 알림 (신호 없어도 발송)
   같은 종목은 하루 한 번만 알림 (/scan 강제 실행은 예외)
