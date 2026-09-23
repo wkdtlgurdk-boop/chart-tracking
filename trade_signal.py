@@ -9,7 +9,7 @@
   눌림 꼬리   : 윗꼬리가 달리면 제외, 아랫꼬리가 달리면 상한을 +7% 까지 연다
   눌림 공통   : 오늘 종가 < 1~3일 전 종가 평균 이면 '내려오는 차트'로 보고 제외
   정배열 필수 : 20일 눌림은 5 > 20 > 60, 60일 눌림은 20 > 60 > 120 (config pullback_align_ma)
-  20일선 회복 : 오늘 종가가 20일선 대비 -3% ~ 0% (선 바로 아래), 이틀 연속 상승 마감,
+  20일선 회복 : 오늘 종가가 20일선 대비 -3% ~ 0% (선 바로 아래), 오늘 상승 마감 + 전날 상승 또는 보합(±1%),
                 20 > 60 > 120 정배열. '내려오는 차트' 제외는 눌림과 같다. 20일 눌림이 잡히면 붙이지 않는다.
   (신고가 과열 컷은 tradesignal 규칙을 가져옴)
 
@@ -87,6 +87,9 @@ DEFAULTS = {
     "reclaim_ma_days": 20,
     "reclaim_band_pct": [-3.0, 0.0],
     "reclaim_up_days": 2,
+    # 앞선 날들은 보합(±reclaim_flat_pct%)이어도 된다. 오늘은 반드시 상승 마감이어야 한다.
+    # 메가터치 9/07(-0.3%) → 9/08(+3.1%) 같은 '보합 후 상승'을 잡으려고 둔다.
+    "reclaim_flat_pct": 1.0,
     "reclaim_align_ma": [20, 60, 120],
     "notify_when_empty": True,
 }
@@ -319,7 +322,7 @@ def detect(candles, cfg):
 
 
 def reclaim(closes, close, cfg):
-    """20일선 회복. 선 바로 아래에서 이틀 연속 올라 선으로 다가오는 자리."""
+    """20일선 회복. 선 바로 아래에서 이틀 연속 오르며(앞날은 보합도 된다) 선으로 다가오는 자리."""
     m, k = cfg["reclaim_ma_days"], cfg["reclaim_up_days"]
     align = cfg["reclaim_align_ma"]
     if len(closes) < max(m, k + 1, *align):
@@ -327,14 +330,17 @@ def reclaim(closes, close, cfg):
     mas = [sum(closes[-a:]) / a for a in align]
     if any(x <= y for x, y in zip(mas, mas[1:])):
         return []  # 정배열 아님
-    if any(closes[-i] <= closes[-i - 1] for i in range(1, k + 1)):
-        return []  # 연속 상승 마감이 아님
+    if closes[-1] <= closes[-2]:
+        return []  # 오늘 상승 마감이 아님
+    floor = 1 - cfg["reclaim_flat_pct"] / 100
+    if any(closes[-i] < closes[-i - 1] * floor for i in range(2, k + 1)):
+        return []  # 앞선 날이 보합 밖으로 밀렸다
     ma = sum(closes[-m:]) / m
     gap = (close / ma - 1) * 100
     lo, hi = cfg["reclaim_band_pct"]
     if not lo <= gap <= hi:
         return []
-    return [(f"{m}일선 회복", f"{m}일선 {ma:,.0f} 대비 {gap:+.1f}% · {k}일 연속 상승")]
+    return [(f"{m}일선 회복", f"{m}일선 {ma:,.0f} 대비 {gap:+.1f}%")]
 
 
 def wick(candle, cfg):
