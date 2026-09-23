@@ -9,9 +9,9 @@
   눌림 꼬리   : 윗꼬리가 달리면 제외, 아랫꼬리가 달리면 상한을 +7% 까지 연다
   눌림 공통   : 오늘 종가 < 1~3일 전 종가 평균 이면 '내려오는 차트'로 보고 제외
   정배열 필수 : 20일 눌림은 5 > 20 > 60, 60일 눌림은 20 > 60 > 120 (config pullback_align_ma)
-  회복돌파    : 직전 3거래일 안에 20/60일선 아래로 마감한 날이 있고, 오늘 선 위에서 +3% 이상.
-                5<20<60 역배열 제외.
-                신고가·눌림이 잡힌 종목엔 붙이지 않는다. (신고가 과열 컷과 함께 tradesignal 규칙을 가져옴)
+  20일선 회복 : 오늘 종가가 20일선 대비 -3% ~ 0% (선 바로 아래), 이틀 연속 상승 마감,
+                20 > 60 > 120 정배열. '내려오는 차트' 제외는 눌림과 같다. 20일 눌림이 잡히면 붙이지 않는다.
+  (신고가 과열 컷은 tradesignal 규칙을 가져옴)
 
 데이터: 네이버의 비공식 read-only 엔드포인트 (공식 API 아님 — 구조가 바뀌면 실패할 수 있음)
         종목명 해석은 stock.naver.com, 일봉은 api.stock.naver.com.
@@ -80,10 +80,14 @@ DEFAULTS = {
     # 아래 셋은 tradesignal(volume-surge-telegram-bot/tradesignal/signals.py)에서 가져왔다.
     # 신고가여도 60일선 위로 이만큼 넘게 떠 있으면 알리지 않는다. 손절선이 한참 아래라서다.
     "max_breakout_extension": 30.0,
-    # 회복돌파: 직전 recovery_days 거래일 안에 기준선 아래로 마감한 날이 있고, 오늘 선 위에서
-    # recovery_min_change% 이상 오른 자리.
-    "recovery_days": 3,
-    "recovery_min_change": 3.0,
+    # 20일선 회복: 20일선 바로 아래(reclaim_band_pct)에서 reclaim_up_days 일 연속 상승 마감하며
+    # 선으로 다가오는 자리. 20일 눌림은 5>20>60 을 요구해서, 선 아래로 눌려 5일선이
+    # 20일선 밑으로 내려간 종목은 못 잡는다(메가터치 8/31~9/08). 그 자리를 여기서 본다.
+    # 대신 중장기 추세는 20>60>120 정배열로 확인한다.
+    "reclaim_ma_days": 20,
+    "reclaim_band_pct": [-3.0, 0.0],
+    "reclaim_up_days": 2,
+    "reclaim_align_ma": [20, 60, 120],
     "notify_when_empty": True,
 }
 
@@ -282,23 +286,6 @@ def fetch_daily(code, days):
     return candles[-int(days):]
 
 
-def recovery_ago(closes, m, days):
-    """직전 days 거래일 중 마지막으로 m일선 아래서 마감한 날이 며칠 전인가. 오늘 선 아래거나 없으면 None.
-
-    이탈은 그날까지의 봉으로 낸 그날의 선으로 판정한다 — 오늘 선으로 과거를 재면
-    그때 실제로 뚫렸는지와 다른 답이 나온다.
-    창을 직전 days 봉으로 좁히는 것이 '금세'의 뜻이다. 전에는 10봉 창에서 이탈 구간의
-    길이를 셌는데, 그러면 되찾은 지 며칠 지나 선 위에서 오른 날마다 잡혔다
-    (메가터치 9/03 하루 이탈로 9/08~9/11 나흘 연속).
-    """
-    flags = []
-    for i in range(max(len(closes) - days - 1, m - 1), len(closes)):
-        flags.append(closes[i] < sum(closes[i - m + 1:i + 1]) / m)
-    if not flags or flags[-1] or not any(flags):
-        return None
-    return len(flags) - 1 - max(i for i, x in enumerate(flags) if x)
-
-
 def detect(candles, cfg):
     closes = [c["close"] for c in candles]
     today = candles[-1]
@@ -321,28 +308,33 @@ def detect(candles, cfg):
             if ext is None or ext <= cfg["max_breakout_extension"]:
                 hits.append((f"{n}일 신고가", f"직전 {n}일 최고 {ref:,.0f}"))
 
-    # 5<20<60 역배열이면 회복돌파로 치지 않는다 — 하락 추세 중의 반등이다.
-    ma5, ma20, ma60 = ma_of(5), ma_of(20), ma_of(60)
-    downtrend = None not in (ma5, ma20, ma60) and ma5 < ma20 < ma60
-
     k = cfg["falling_filter_days"]
     falling = len(closes) <= k or close < sum(closes[-k - 1:-1]) / k
     if not falling:  # 내려오는 차트면 눌림 제외
         hits.extend(pullbacks(closes, close, cfg, wick(today, cfg)))
 
-    # 회복돌파는 맨 뒤에 본다 (tradesignal 과 같은 우선순위: 신고가 → 눌림 → 회복돌파).
-    # 띠 안이면 눌림이 먼저 잡으므로 여기 오는 것은 띠 위로 튄 날이다.
-    if not hits and not downtrend \
-            and today["rate"] >= cfg["recovery_min_change"]:
-        for m in cfg["pullback_ma_days"]:
-            ma = ma_of(m)
-            if not ma or close <= ma:
-                continue
-            ago = recovery_ago(closes, m, cfg["recovery_days"])
-            if ago is not None:
-                hits.append(("회복돌파", f"{m}일선 {ago}일 전 이탈 후 회복 {(close / ma - 1) * 100:+.1f}%"))
-                break
+        if not any(label == f"{cfg['reclaim_ma_days']}일 눌림" for label, _ in hits):
+            hits.extend(reclaim(closes, close, cfg))
     return hits
+
+
+def reclaim(closes, close, cfg):
+    """20일선 회복. 선 바로 아래에서 이틀 연속 올라 선으로 다가오는 자리."""
+    m, k = cfg["reclaim_ma_days"], cfg["reclaim_up_days"]
+    align = cfg["reclaim_align_ma"]
+    if len(closes) < max(m, k + 1, *align):
+        return []
+    mas = [sum(closes[-a:]) / a for a in align]
+    if any(x <= y for x, y in zip(mas, mas[1:])):
+        return []  # 정배열 아님
+    if any(closes[-i] <= closes[-i - 1] for i in range(1, k + 1)):
+        return []  # 연속 상승 마감이 아님
+    ma = sum(closes[-m:]) / m
+    gap = (close / ma - 1) * 100
+    lo, hi = cfg["reclaim_band_pct"]
+    if not lo <= gap <= hi:
+        return []
+    return [(f"{m}일선 회복", f"{m}일선 {ma:,.0f} 대비 {gap:+.1f}% · {k}일 연속 상승")]
 
 
 def wick(candle, cfg):
@@ -423,6 +415,7 @@ def scan(cfg, state, dry_run, force):
     cache = state.setdefault("resolved", {})
     align_days = [a for mas in cfg["pullback_align_ma"].values() for a in mas]
     days = max(cfg["new_high_days"] + 1, *cfg["pullback_ma_days"], *align_days,
+               *cfg["reclaim_align_ma"], cfg["reclaim_up_days"] + 1,
                cfg["falling_filter_days"] + 1) + 5
     groups, unresolved, failed, seen = {}, [], [], set()
     scanned, latest, found_codes, already = 0, "", set(), []
@@ -494,7 +487,7 @@ def scan(cfg, state, dry_run, force):
     live = latest == today and f"{now:%H:%M}" < cfg["intraday_end"]
     basis = f"{now:%H:%M} 장중 현재가" if live else "종가"
     parts = [f"📡 Trade Signal · {d:%m/%d}({WEEKDAYS[d.weekday()]}) {basis} 기준"]
-    order = [f"{cfg['new_high_days']}일 신고가"] + [f"{m}일 눌림" for m in cfg["pullback_ma_days"]] + ["회복돌파"]
+    order = [f"{cfg['new_high_days']}일 신고가"] + [f"{m}일 눌림" for m in cfg["pullback_ma_days"]] + [f"{cfg['reclaim_ma_days']}일선 회복"]
     for label in order:
         if groups.get(label):
             parts.append(f"\n[{label}] {len(groups[label])}종목")
