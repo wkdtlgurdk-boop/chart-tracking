@@ -4,8 +4,9 @@
 차트 조건 (일봉)
   20일 신고가 : 오늘 종가 > 직전 20거래일 최고 종가   (config new_high_basis="high" 이면 고가 기준)
                 단 60일선 대비 +30% 넘게 떠 있으면 제외 (max_breakout_extension)
-  20일 눌림   : 오늘 종가가 20일 이동평균 대비 -1% ~ +3%
-  60일 눌림   : 오늘 종가가 60일 이동평균 대비 -1% ~ +3%
+  20일 눌림   : 오늘 종가가 20일 이동평균 대비 -1% ~ +5%
+  60일 눌림   : 오늘 종가가 60일 이동평균 대비 -1% ~ +5%
+  눌림 꼬리   : 윗꼬리가 달리면 제외, 아랫꼬리가 달리면 상한을 +7% 까지 연다
   눌림 공통   : 오늘 종가 < 1~3일 전 종가 평균 이면 '내려오는 차트'로 보고 제외
   정배열 필수 : 20일 눌림은 5 > 20 > 60, 60일 눌림은 20 > 60 > 120 (config pullback_align_ma)
   회복돌파    : 직전 3거래일 안에 20/60일선 아래로 마감한 날이 있고, 오늘 선 위에서 +3% 이상.
@@ -66,7 +67,14 @@ DEFAULTS = {
     "new_high_days": 20,
     "new_high_basis": "close",
     "pullback_ma_days": [20, 60],
-    "pullback_band_pct": [-1.0, 3.0],
+    "pullback_band_pct": [-1.0, 5.0],
+    # 눌림 꼬리. 윗꼬리는 위에서 판 물량이 있었다는 뜻이라 눌림에서 뺀다. 아랫꼬리는
+    # 아래에서 받친 매수가 있었다는 뜻이라 상한을 pullback_lower_wick_max 까지 연다.
+    # 꼬리로 치는 기준: 몸통 × wick_body_ratio 이상이고 종가의 wick_min_pct% 이상.
+    # 둘 다 달렸으면 긴 쪽으로 본다.
+    "pullback_lower_wick_max": 7.0,
+    "wick_body_ratio": 1.0,
+    "wick_min_pct": 2.0,
     "falling_filter_days": 3,
     "pullback_align_ma": {"20": [5, 20, 60], "60": [20, 60, 120]},
     # 아래 셋은 tradesignal(volume-surge-telegram-bot/tradesignal/signals.py)에서 가져왔다.
@@ -257,7 +265,9 @@ def fetch_daily(code, days):
         # 그걸 오늘로 삼으면 종가가 0 이 되어 전 종목이 신호를 낸 것처럼 보인다.
         if not date or close <= 0 or volume <= 0:
             continue
-        candles.append({"date": str(date), "high": num(r.get("highPrice")) or close,
+        candles.append({"date": str(date), "open": num(r.get("openPrice")) or close,
+                        "high": num(r.get("highPrice")) or close,
+                        "low": num(r.get("lowPrice")) or close,
                         "close": close, "rate": 0.0})
     if not candles:
         raise RuntimeError(f"쓸 수 있는 일봉이 없음 (받은 행 {len(rows)})")
@@ -318,7 +328,7 @@ def detect(candles, cfg):
     k = cfg["falling_filter_days"]
     falling = len(closes) <= k or close < sum(closes[-k - 1:-1]) / k
     if not falling:  # 내려오는 차트면 눌림 제외
-        hits.extend(pullbacks(closes, close, cfg))
+        hits.extend(pullbacks(closes, close, cfg, wick(today, cfg)))
 
     # 회복돌파는 맨 뒤에 본다 (tradesignal 과 같은 우선순위: 신고가 → 눌림 → 회복돌파).
     # 띠 안이면 눌림이 먼저 잡으므로 여기 오는 것은 띠 위로 튄 날이다.
@@ -335,9 +345,33 @@ def detect(candles, cfg):
     return hits
 
 
-def pullbacks(closes, close, cfg):
+def wick(candle, cfg):
+    """오늘 봉의 꼬리. "upper" / "lower" / None.
+
+    몸통만으로 재면 도지(시가≈종가)는 1틱 꼬리도 꼬리가 되므로 종가 대비 최소 길이를
+    같이 본다. 장중에는 아직 봉이 다 안 그려졌으므로 그 시각 모양으로 판정한다.
+    """
+    o, h, l, c = candle.get("open"), candle.get("high"), candle.get("low"), candle["close"]
+    if not o or not h or not l:
+        return None
+    body = abs(c - o)
+    upper = h - max(o, c)
+    lower = min(o, c) - l
+    need = max(body * cfg["wick_body_ratio"], c * cfg["wick_min_pct"] / 100)
+    if upper >= need and upper >= lower:
+        return "upper"
+    if lower >= need:
+        return "lower"
+    return None
+
+
+def pullbacks(closes, close, cfg, tail=None):
     hits = []
+    if tail == "upper":
+        return hits  # 윗꼬리 — 위에서 누르는 물량이 있었다
     lo, hi = cfg["pullback_band_pct"]
+    if tail == "lower":
+        hi = max(hi, cfg["pullback_lower_wick_max"])
     for m in cfg["pullback_ma_days"]:
         if len(closes) < m:
             continue
@@ -351,7 +385,8 @@ def pullbacks(closes, close, cfg):
         ma = sum(closes[-m:]) / m
         gap = (close / ma - 1) * 100
         if lo <= gap <= hi:
-            hits.append((f"{m}일 눌림", f"{m}일선 {ma:,.0f} 대비 {gap:+.1f}%"))
+            note = " · 아랫꼬리" if tail == "lower" else ""
+            hits.append((f"{m}일 눌림", f"{m}일선 {ma:,.0f} 대비 {gap:+.1f}%{note}"))
     return hits
 
 
