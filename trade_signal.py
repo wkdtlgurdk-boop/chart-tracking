@@ -8,7 +8,8 @@
   60일 눌림   : 오늘 종가가 60일 이동평균 대비 -1% ~ +3%
   눌림 공통   : 오늘 종가 < 1~3일 전 종가 평균 이면 '내려오는 차트'로 보고 제외
   정배열 필수 : 20일 눌림은 5 > 20 > 60, 60일 눌림은 20 > 60 > 120 (config pullback_align_ma)
-  회복돌파    : 20/60일선을 3거래일 이하 내줬다가 되찾고 오늘 +3% 이상. 5<20<60 역배열 제외.
+  회복돌파    : 직전 3거래일 안에 20/60일선 아래로 마감한 날이 있고, 오늘 선 위에서 +3% 이상.
+                5<20<60 역배열 제외.
                 신고가·눌림이 잡힌 종목엔 붙이지 않는다. (신고가 과열 컷과 함께 tradesignal 규칙을 가져옴)
 
 데이터: 네이버의 비공식 read-only 엔드포인트 (공식 API 아님 — 구조가 바뀌면 실패할 수 있음)
@@ -71,10 +72,9 @@ DEFAULTS = {
     # 아래 셋은 tradesignal(volume-surge-telegram-bot/tradesignal/signals.py)에서 가져왔다.
     # 신고가여도 60일선 위로 이만큼 넘게 떠 있으면 알리지 않는다. 손절선이 한참 아래라서다.
     "max_breakout_extension": 30.0,
-    # 회복돌파: 기준선을 recovery_days 거래일 이하로 내줬다가 되찾고, 오늘 선 위에서
-    # recovery_min_change% 이상 오른 자리. 이탈은 최근 recovery_lookback 봉 안에서 찾는다.
+    # 회복돌파: 직전 recovery_days 거래일 안에 기준선 아래로 마감한 날이 있고, 오늘 선 위에서
+    # recovery_min_change% 이상 오른 자리.
     "recovery_days": 3,
-    "recovery_lookback": 10,
     "recovery_min_change": 3.0,
     "notify_when_empty": True,
 }
@@ -272,24 +272,21 @@ def fetch_daily(code, days):
     return candles[-int(days):]
 
 
-def recovery_run(closes, m, lookback):
-    """최근 lookback 봉에서 m일선 이탈이 몇 봉 이어졌다가 끝났나. 오늘 선 아래거나 이탈이 없으면 None.
+def recovery_ago(closes, m, days):
+    """직전 days 거래일 중 마지막으로 m일선 아래서 마감한 날이 며칠 전인가. 오늘 선 아래거나 없으면 None.
 
     이탈은 그날까지의 봉으로 낸 그날의 선으로 판정한다 — 오늘 선으로 과거를 재면
-    그때 실제로 뚫렸는지와 다른 답이 나온다. 세는 것은 '마지막 이탈 이후 며칠'이 아니라
-    이탈 구간의 길이다(마지막 이탈 다음 봉은 정의상 선 위라 앞엣것은 늘 1이 나온다).
+    그때 실제로 뚫렸는지와 다른 답이 나온다.
+    창을 직전 days 봉으로 좁히는 것이 '금세'의 뜻이다. 전에는 10봉 창에서 이탈 구간의
+    길이를 셌는데, 그러면 되찾은 지 며칠 지나 선 위에서 오른 날마다 잡혔다
+    (메가터치 9/03 하루 이탈로 9/08~9/11 나흘 연속).
     """
     flags = []
-    for i in range(max(len(closes) - lookback, m - 1), len(closes)):
+    for i in range(max(len(closes) - days - 1, m - 1), len(closes)):
         flags.append(closes[i] < sum(closes[i - m + 1:i + 1]) / m)
     if not flags or flags[-1] or not any(flags):
         return None
-    idx = max(i for i, x in enumerate(flags) if x)
-    run = 0
-    while idx >= 0 and flags[idx]:
-        run += 1
-        idx -= 1
-    return run
+    return len(flags) - 1 - max(i for i, x in enumerate(flags) if x)
 
 
 def detect(candles, cfg):
@@ -331,9 +328,9 @@ def detect(candles, cfg):
             ma = ma_of(m)
             if not ma or close <= ma:
                 continue
-            run = recovery_run(closes, m, cfg["recovery_lookback"])
-            if run is not None and run <= cfg["recovery_days"]:
-                hits.append(("회복돌파", f"{m}일선 {run}일 이탈 후 회복 {(close / ma - 1) * 100:+.1f}%"))
+            ago = recovery_ago(closes, m, cfg["recovery_days"])
+            if ago is not None:
+                hits.append(("회복돌파", f"{m}일선 {ago}일 전 이탈 후 회복 {(close / ma - 1) * 100:+.1f}%"))
                 break
     return hits
 
