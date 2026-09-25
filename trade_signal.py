@@ -26,6 +26,7 @@ import os
 import re
 import sys
 import time
+import krx_holidays
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -261,6 +262,15 @@ def scan(cfg, state, dry_run, force):
     if not force and now.weekday() >= 5:
         log("주말 — 명령만 처리")
         return
+    # 휴장일도 같다. 시계가 Apps Script 로 옮겨 가면서 그쪽은 요일만 보게
+    # 됐으므로, 추석 같은 평일 휴장일에는 여기서 막는다. 텔레그램 명령(/add
+    # 등)은 그대로 처리한다 -- 주말과 같은 대접이다.
+    holiday = None if force else krx_holidays.holiday_name(now.date())
+    if holiday:
+        log(f"휴장일 ({holiday}) — 명령만 처리")
+        return
+    if not krx_holidays.known_year(now.year):
+        log(f"[경고] {now.year}년 휴장일 달력이 없습니다 — krx_holidays.py 에 덧붙이세요")
     if force:
         mode = "force"
     elif hhmm >= cfg["scan_after"]:
