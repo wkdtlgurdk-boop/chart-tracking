@@ -62,8 +62,8 @@ DEFAULTS = {
 
 HELP = (
     "Trade Signal 사용법\n"
-    "• 종목명 보내기 (또는 /add 종목명) → 관심종목 추가, 쉼표로 여러 개\n"
-    "• /del 종목명 (또는 -종목명) → 삭제\n"
+    "• 종목명 보내기 → 없으면 추가, 이미 있으면 삭제. 쉼표로 여러 개\n"
+    "• 추가만: /add 종목명 (또는 +종목명) / 삭제만: /del 종목명 (또는 -종목명)\n"
     "• /list → 관심종목 보기\n"
     "• /scan → 지금 바로 스캔\n"
     "명령은 평일 08~19시 매시 15분(보통 10~20분 늦음), 주말 6시간마다 처리됩니다."
@@ -394,6 +394,16 @@ def split_keywords(arg):
     return [p.strip() for p in re.split(r"[,\n]", arg) if p.strip()]
 
 
+def find_listed(items, targets, cache):
+    """관심종목 줄 중 targets(이름·코드)에 해당하는 것."""
+    return {
+        kw for kw in items for t in targets
+        if norm(kw) == norm(t)
+        or cache.get(kw, {}).get("code") == t
+        or norm(cache.get(kw, {}).get("name", "")) == norm(t)
+    }
+
+
 def handle_command(text, state):
     """반환: (답장, 지금 스캔할지)"""
     cache = state.setdefault("resolved", {})
@@ -402,8 +412,11 @@ def handle_command(text, state):
         cmd, arg = m.group(1).lower(), m.group(2).strip()
     elif text.startswith("-"):
         cmd, arg = "del", text[1:].strip()
-    else:
+    elif text.startswith("+"):
         cmd, arg = "add", text.lstrip("+").strip()
+    else:
+        # 종목명만 보내면 켜고 끈다: 없으면 추가, 있으면 삭제 (2026-10-03 사용자 요청).
+        cmd, arg = "toggle", text
 
     if cmd == "scan":
         return None, True
@@ -418,12 +431,21 @@ def handle_command(text, state):
             lines.append(f"• {info.get('name', kw)}" + (f" ({info['code']})" if info.get("code") else ""))
         return f"관심종목 {len(items)}개\n" + "\n".join(lines), False
 
-    if cmd == "add" and arg:
+    if cmd in ("add", "toggle") and arg:
+        toggle = cmd == "toggle"
         current = read_watchlist()
         codes = {cache[k]["code"] for k in current if "code" in cache.get(k, {})}
         out, queue = [], split_keywords(arg)
         while queue:
             kw = queue.pop(0)
+            # 이미 있는 종목은 검색 없이 바로 뺀다 — 네이버가 죽어도 삭제는 된다.
+            listed = find_listed(current, [kw], cache) if toggle else set()
+            if listed:
+                remove_from_watchlist(listed)
+                current = [k for k in current if k not in listed]
+                codes -= {cache.get(k, {}).get("code") for k in listed}
+                out.append("🗑 삭제: " + ", ".join(cache.get(k, {}).get("name", k) for k in listed))
+                continue
             info = resolve(kw, cache)
             if "code" not in info:
                 if " " in kw:  # "삼성전자 SK하이닉스" 처럼 띄어쓰기로 여러 개 보낸 경우
@@ -433,9 +455,17 @@ def handle_command(text, state):
                 out.append(f"❓ '{kw}' — {hint}")
                 continue
             if info["code"] in codes:
-                out.append(f"이미 있음: {info['name']}")
+                listed = {k for k in current if cache.get(k, {}).get("code") == info["code"]}
+                if toggle and listed:
+                    remove_from_watchlist(listed)
+                    current = [k for k in current if k not in listed]
+                    codes.discard(info["code"])
+                    out.append(f"🗑 삭제: {info['name']}")
+                else:
+                    out.append(f"이미 있음: {info['name']}")
                 continue
             add_to_watchlist(info["name"])
+            current.append(info["name"])
             cache[info["name"]] = {"code": info["code"], "name": info["name"]}
             codes.add(info["code"])
             out.append(f"✅ 추가: {info['name']} ({info['code']})")
@@ -443,12 +473,7 @@ def handle_command(text, state):
 
     if cmd == "del" and arg:
         targets = split_keywords(arg)
-        remove = {
-            kw for kw in read_watchlist() for t in targets
-            if norm(kw) == norm(t)
-            or cache.get(kw, {}).get("code") == t
-            or norm(cache.get(kw, {}).get("name", "")) == norm(t)
-        }
+        remove = find_listed(read_watchlist(), targets, cache)
         if not remove:
             return f"관심종목에서 못 찾음: {', '.join(targets)}", False
         remove_from_watchlist(remove)
