@@ -145,10 +145,11 @@
       "name": "코스맥스"
     }
   },
-  "last_intraday_slot": "2026100710",
+  "last_intraday_slot": "2026100711",
   "alerted_today": {
     "date": "20261007",
     "codes": [
+      "017890",
       "192820",
       "241710",
       "420770"
