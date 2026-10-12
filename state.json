@@ -147,9 +147,13 @@
     "셀바이오휴먼텍": {
       "code": "318160",
       "name": "셀바이오휴먼텍"
+    },
+    "/ 삼성중공업": {
+      "code": "010140",
+      "name": "삼성중공업"
     }
   },
-  "last_intraday_slot": "2026101213",
+  "last_intraday_slot": "2026101214",
   "alerted_today": {
     "date": "20261012",
     "codes": [
@@ -159,5 +163,5 @@
     ]
   },
   "last_sent_date": "20261008",
-  "update_offset": 284921145
+  "update_offset": 284921148
 }
