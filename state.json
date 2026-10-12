@@ -149,10 +149,13 @@
       "name": "셀바이오휴먼텍"
     }
   },
-  "last_intraday_slot": "2026101210",
+  "last_intraday_slot": "2026101211",
   "alerted_today": {
     "date": "20261012",
-    "codes": []
+    "codes": [
+      "236200",
+      "241710"
+    ]
   },
   "last_sent_date": "20261008",
   "update_offset": 284921141
