@@ -153,14 +153,10 @@
       "name": "삼성중공업"
     }
   },
-  "last_intraday_slot": "2026101219",
+  "last_intraday_slot": "2026101310",
   "alerted_today": {
-    "date": "20261012",
-    "codes": [
-      "236200",
-      "241710",
-      "318160"
-    ]
+    "date": "20261013",
+    "codes": []
   },
   "last_sent_date": "20261012",
   "update_offset": 284921148
