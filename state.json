@@ -151,9 +151,25 @@
     "/ 삼성중공업": {
       "code": "010140",
       "name": "삼성중공업"
+    },
+    "oci홀딩스": {
+      "code": "010060",
+      "name": "OCI홀딩스"
+    },
+    "OCI홀딩스": {
+      "code": "010060",
+      "name": "OCI홀딩스"
+    },
+    "sk이터닉스": {
+      "code": "475150",
+      "name": "SK이터닉스"
+    },
+    "SK이터닉스": {
+      "code": "475150",
+      "name": "SK이터닉스"
     }
   },
-  "last_intraday_slot": "2026101516",
+  "last_intraday_slot": "2026101517",
   "alerted_today": {
     "date": "20261015",
     "codes": [
@@ -161,5 +177,5 @@
     ]
   },
   "last_sent_date": "20261014",
-  "update_offset": 284921152
+  "update_offset": 284921155
 }
