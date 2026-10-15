@@ -167,9 +167,13 @@
     "SK이터닉스": {
       "code": "475150",
       "name": "SK이터닉스"
+    },
+    "한화솔루션": {
+      "code": "009830",
+      "name": "한화솔루션"
     }
   },
-  "last_intraday_slot": "2026101517",
+  "last_intraday_slot": "2026101518",
   "alerted_today": {
     "date": "20261015",
     "codes": [
@@ -177,5 +181,5 @@
     ]
   },
   "last_sent_date": "20261014",
-  "update_offset": 284921155
+  "update_offset": 284921156
 }
