@@ -173,12 +173,13 @@
       "name": "한화솔루션"
     }
   },
-  "last_intraday_slot": "2026101610",
+  "last_intraday_slot": "2026101611",
   "alerted_today": {
     "date": "20261016",
     "codes": [
       "071200",
-      "192820"
+      "192820",
+      "241710"
     ]
   },
   "last_sent_date": "20261015",
