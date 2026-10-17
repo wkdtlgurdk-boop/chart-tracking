@@ -42,9 +42,12 @@ RULES = {
     "wick_min_pct": 2.0,
     "pullback_align_ma": {"20": [5, 20, 60], "60": [20, 60, 120]},
 
-    # 눌림·회복 공통: 종가가 직전 N일 종가 평균보다 낮으면 '내려오는 차트'.
+    # 눌림·회복 공통: 종가가 직전 N일 종가 평균보다 낮고 **전일 종가보다도** 낮으면
+    # '내려오는 차트'. 둘 중 하나만 넘으면 통과한다.
     # 3 이었다가 2 로 줄였다 (2026-09-23 사용자 결정). 3일이면 사흘 전 고점이 평균에
     # 섞여 막 돌아선 날을 막았다 -- 메가터치 8/24, 9/04.
+    # 전일 종가 조건은 2026-10-17 사용자 결정. 급락 다음 날 반등한 첫날이 2일 평균에
+    # 못 미쳐 빠졌다 -- 피노 10/16 (전일 8,720 → 9,100, 2일 평균 9,185).
     "falling_filter_days": 2,
 
     # 20일선 회복. 20일 눌림은 5>20>60 을 요구해서, 선 아래로 눌려 5일선이 20일선
@@ -106,8 +109,11 @@ def wick(candle: dict, cfg: dict) -> str | None:
 
 
 def is_falling(closes: list[float], cfg: dict) -> bool:
+    """직전 k일 평균 아래 **이고** 전일 종가 아래면 내려오는 차트. 하나라도 넘으면 아니다."""
     k = cfg["falling_filter_days"]
-    return len(closes) <= k or closes[-1] < sum(closes[-k - 1:-1]) / k
+    if len(closes) <= k:
+        return True
+    return closes[-1] < sum(closes[-k - 1:-1]) / k and closes[-1] < closes[-2]
 
 
 def breakout(candles: list[dict], cfg: dict) -> dict | None:
@@ -226,7 +232,8 @@ def explain(candles: list[dict], cfg: dict) -> list[str]:
         out.append(f"신고가 아님 — 직전 {cfg['new_high_days']}일 최고 종가 넘지 못함")
     if is_falling(closes, cfg):
         k = cfg["falling_filter_days"]
-        out.append(f"내려오는 차트 — 직전 {k}일 평균 {sum(closes[-k - 1:-1]) / k:,.0f}원 아래")
+        out.append(f"내려오는 차트 — 직전 {k}일 평균 {sum(closes[-k - 1:-1]) / k:,.0f}원"
+                   f"·전일 {closes[-2]:,.0f}원 둘 다 아래")
     tail = wick(candles[-1], cfg)
     if tail == "upper":
         out.append("윗꼬리 — 눌림 제외")

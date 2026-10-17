@@ -74,9 +74,21 @@ class Pullback(unittest.TestCase):
         self.assertIsNone(r.wick(c, CFG))
 
     def test_내려오는_차트는_제외(self):
-        closes = self.base[:-1] + [9_800]
+        # 직전 2일 평균(9,850)과 전일(9,800) 둘 다 아래.
+        closes = self.base[:-1] + [9_750]
         self.assertTrue(r.is_falling(closes, CFG))
         self.assertEqual([k for k, _ in kinds(candles(closes))], [])
+
+    def test_전일보다_오르면_평균_아래여도_내려오는_차트가_아니다(self):
+        # 2026-10-17: 급락 다음 날 반등한 첫날(피노 10/16). 2일 평균 9,850 아래지만
+        # 전일 9,800 보다 높다.
+        closes = self.base[:-1] + [9_820]
+        self.assertFalse(r.is_falling(closes, CFG))
+        self.assertIn((r.PULLBACK, 20), kinds(candles(closes)))
+
+    def test_평균보다_높으면_전일보다_낮아도_내려오는_차트가_아니다(self):
+        closes = self.base[:-2] + [9_700, 9_950, 9_900]   # 평균 9,825 < 9,900 < 전일 9,950
+        self.assertFalse(r.is_falling(closes, CFG))
 
 
 class Reclaim(unittest.TestCase):
