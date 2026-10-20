@@ -177,11 +177,12 @@
       "name": "동국제약"
     }
   },
-  "last_intraday_slot": "2026102015",
+  "last_intraday_slot": "2026102016",
   "alerted_today": {
     "date": "20261020",
     "codes": [
       "017890",
+      "043370",
       "086450",
       "121600"
     ]
