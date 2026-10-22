@@ -125,10 +125,34 @@ class Breakout(unittest.TestCase):
         self.assertEqual(kinds(candles([10_000] * 129 + [10_500]))[0][0], r.BREAKOUT)
 
     def test_과열_신고가는_빠진다(self):
+        # 20봉에 두 배: 20일선 +31% (컷 25)
         closes = [10_000] * 110 + [10_000 + 500 * i for i in range(1, 21)]
         cs = candles(closes)
-        self.assertIsNotNone(r.overextension(cs, CFG))
+        hot = r.overextension(cs, CFG)
+        self.assertEqual(hot["ma_days"], 20)
         self.assertNotIn(r.BREAKOUT, [k for k, _ in kinds(cs)])
+
+    def test_하루_급등은_5일선으로_걸린다(self):
+        # 하루 +20%: 5일선 +15.4% (컷 15), 20일선 +18.8% (컷 25 안)
+        cs = candles([10_000] * 129 + [12_000])
+        hot = r.overextension(cs, CFG)
+        self.assertEqual((hot["ma_days"], hot["cut"]), (5, 15.0))
+        self.assertNotIn(r.BREAKOUT, [k for k, _ in kinds(cs)])
+
+    def test_60일선에서_멀어도_단기선_안이면_신고가(self):
+        # 2026-10-22 사용자 결정: 60일선 이격은 보지 않는다. 하루 1.5% 씩 130봉 꾸준히
+        # 오른 모양은 60일선 +50% 가 넘지만 20일선 +15%·5일선 +3% 안팎이라 통과한다.
+        closes = [5_000 * 1.015 ** i for i in range(130)]
+        cs = candles(closes)
+        self.assertGreater(closes[-1] / (sum(closes[-60:]) / 60) - 1, 0.30)
+        self.assertIsNone(r.overextension(cs, CFG))
+        self.assertEqual(kinds(cs)[0][0], r.BREAKOUT)
+
+    def test_선을_모르면_막지_않는다(self):
+        # 봉이 모자라 그 선이 없으면 과열로 치지 않는다 -- 신규 상장주가 영영 못 든다.
+        cs = candles([10_000] * 39 + [10_300])
+        got = r.overextension(cs, r.merged({"max_breakout_gap": {"5": 15.0, "200": 1.0}}))
+        self.assertIsNone(got)
 
 
 # 메가터치(446540) 실제 일봉. 2026-09-23 사용자와 맞춘 판정을 못 박는다.
@@ -294,6 +318,13 @@ EXPECTED = {
     "20260904": "60일 눌림",      # +5.0%, 9/03 급락 뒤 반등 (하락 필터 2일 평균)
     "20260908": "20일선 회복",    # -1.8%, 전날 -0.3% 보합
     "20260915": "20일 신고가",
+    # 아래 넷은 60일선 +30% 컷(9/23 기준)에서는 빠졌다. 2026-10-22 과열을 5·20일선으로
+    # 바꾼 뒤 잡힌다 -- 60일선 +30~34% 지만 5일선 +3~5%, 20일선 +18~20% 다.
+    "20260916": "20일 신고가",
+    "20260917": "20일 신고가",
+    "20260921": "20일 신고가",
+    "20260922": "20일 신고가",
+    # 9/23 (+15.0%, 5일선 +15.7% · 20일선 +34.7%) 은 여전히 과열로 빠진다.
 }
 
 

@@ -12,7 +12,8 @@
 장중에 부르면 마지막 봉은 그 시각까지의 봉이다.
 
 차트 유형 (우선순위 순)
-  20일 신고가  : 종가 > 직전 20거래일 최고 종가. 60일선 +30% 넘게 떠 있으면 제외(과열).
+  20일 신고가  : 종가 > 직전 20거래일 최고 종가. 5일선 +15% 또는 20일선 +25% 넘게
+                 떠 있으면 제외(과열).
   20·60일 눌림 : 종가가 기준선 대비 -1% ~ +5%.
                  윗꼬리면 제외, 아랫꼬리면 상한 +7% 까지.
                  20일 눌림은 5>20>60, 60일 눌림은 20>60>120 정배열.
@@ -26,9 +27,12 @@ RULES = {
     # 신고가
     "new_high_days": 20,
     "new_high_basis": "close",      # "close" 종가 기준 / "high" 고가 기준
-    # 신고가여도 60일선(pullback_ma_days 중 가장 긴 선) 위로 이만큼 넘게 떠 있으면
-    # 알리지 않는다. 손절선이 한참 아래라 물리면 크게 물린다.
-    "max_breakout_extension": 30.0,
+    # 신고가여도 단기선 위로 이만큼(%) 넘게 떠 있으면 알리지 않는다(과열). 손절선이 한참
+    # 아래라 물리면 크게 물린다. {이평 일수: 상한}, 하나라도 넘으면 과열.
+    # 60일선 +30% 였다가 2026-10-22 사용자 결정으로 5·20일선으로 바꿨다. 1년여 테마 종목
+    # 신고가 2,067건에서 5일선 +15%·20일선 +25% 컷이 60일선 +30% 컷과 D+10 평균·최대낙폭이
+    # 같으면서(+0.90% / -10.8% 대 +0.85% / -10.7%) 신고가를 덜 막았다(1,212 대 1,109건).
+    "max_breakout_gap": {"5": 15.0, "20": 25.0},
 
     # 눌림
     "pullback_ma_days": [20, 60],
@@ -117,7 +121,11 @@ def is_falling(closes: list[float], cfg: dict) -> bool:
 
 
 def breakout(candles: list[dict], cfg: dict) -> dict | None:
-    """신고가면 {"prior_high", "extension"} 아니면 None. 과열 여부는 부르는 쪽이 본다."""
+    """신고가면 {"prior_high", "gaps"} 아니면 None. 과열 여부는 부르는 쪽이 본다.
+
+    gaps 는 {이평 일수: 종가의 이격(%)} (max_breakout_gap 의 선들). 봉이 모자라 그 선이
+    없으면 None -- 모르는 것을 과열로 치면 신규 상장주가 영영 못 든다.
+    """
     n = cfg["new_high_days"]
     if len(candles) <= n:
         return None
@@ -128,19 +136,26 @@ def breakout(candles: list[dict], cfg: dict) -> dict | None:
         ref, value = max(closes[-n - 1:-1]), closes[-1]
     if value <= ref:
         return None
-    long_ma = _ma(closes, max(cfg["pullback_ma_days"]))
-    # 60봉이 안 되면 이격도를 모른다. 모르는 것을 과열로 치면 신규 상장주가
-    # 영영 못 든다 -- 막지 않는다.
-    ext = (closes[-1] / long_ma - 1) * 100 if long_ma else None
-    return {"prior_high": ref, "extension": ext}
+    gaps = {}
+    for days in sorted(int(k) for k in cfg["max_breakout_gap"]):
+        ma = _ma(closes, days)
+        gaps[days] = (closes[-1] / ma - 1) * 100 if ma else None
+    return {"prior_high": ref, "gaps": gaps}
 
 
-def overextension(candles: list[dict], cfg: dict) -> float | None:
-    """신고가인데 과열로 컷된 이격도(%). 신고가가 아니거나 과열이 아니면 None."""
+def _overheat(b: dict, cfg: dict) -> dict | None:
+    """breakout() 결과가 과열이면 {"ma_days", "gap", "cut"} (넘은 선 중 짧은 것), 아니면 None."""
+    for days, gap in b["gaps"].items():
+        cut = cfg["max_breakout_gap"][str(days)]
+        if gap is not None and gap > cut:
+            return {"ma_days": days, "gap": gap, "cut": cut}
+    return None
+
+
+def overextension(candles: list[dict], cfg: dict) -> dict | None:
+    """신고가인데 과열로 컷됐으면 {"ma_days", "gap", "cut"}. 신고가가 아니거나 과열이 아니면 None."""
     b = breakout(candles, cfg)
-    if not b or b["extension"] is None:
-        return None
-    return b["extension"] if b["extension"] > cfg["max_breakout_extension"] else None
+    return _overheat(b, cfg) if b else None
 
 
 def pullbacks(candles: list[dict], cfg: dict) -> list[dict]:
@@ -196,7 +211,7 @@ def detect(candles: list[dict], cfg: dict) -> list[dict]:
         return []
     hits = []
     b = breakout(candles, cfg)
-    if b and (b["extension"] is None or b["extension"] <= cfg["max_breakout_extension"]):
+    if b and not _overheat(b, cfg):
         n = cfg["new_high_days"]
         hits.append({"kind": BREAKOUT, "label": f"{n}일 신고가",
                      "detail": f"직전 {n}일 최고 {b['prior_high']:,.0f}"})
@@ -224,10 +239,10 @@ def explain(candles: list[dict], cfg: dict) -> list[str]:
     out = []
     b = breakout(candles, cfg)
     if b:
-        ext = b["extension"]
-        cut = cfg["max_breakout_extension"]
-        if ext is not None and ext > cut:
-            out.append(f"신고가지만 과열 — 60일선 {ext:+.1f}% (컷 {cut}%)")
+        hot = _overheat(b, cfg)
+        if hot:
+            out.append(f"신고가지만 과열 — {hot['ma_days']}일선 {hot['gap']:+.1f}% "
+                       f"(컷 {hot['cut']}%)")
     else:
         out.append(f"신고가 아님 — 직전 {cfg['new_high_days']}일 최고 종가 넘지 못함")
     if is_falling(closes, cfg):
