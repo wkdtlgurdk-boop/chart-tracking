@@ -177,7 +177,7 @@
       "name": "동국제약"
     }
   },
-  "last_intraday_slot": "2026102311",
+  "last_intraday_slot": "2026102312",
   "alerted_today": {
     "date": "20261023",
     "codes": [
@@ -186,5 +186,5 @@
     ]
   },
   "last_sent_date": "20261022",
-  "update_offset": 284921159
+  "update_offset": 284921160
 }
