@@ -181,10 +181,11 @@
       "name": "셀트리온"
     }
   },
-  "last_intraday_slot": "2026102718",
+  "last_intraday_slot": "2026102719",
   "alerted_today": {
     "date": "20261027",
     "codes": [
+      "005430",
       "043370",
       "086450",
       "093520",
