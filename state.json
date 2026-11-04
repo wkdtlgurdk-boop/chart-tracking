@@ -181,7 +181,7 @@
       "name": "셀트리온"
     }
   },
-  "last_intraday_slot": "2026110411",
+  "last_intraday_slot": "2026110412",
   "alerted_today": {
     "date": "20261104",
     "codes": [
@@ -192,5 +192,5 @@
     ]
   },
   "last_sent_date": "20261103",
-  "update_offset": 284921162
+  "update_offset": 284921164
 }
