@@ -201,11 +201,13 @@
       "name": "제주항공"
     }
   },
-  "last_intraday_slot": "2026111910",
+  "last_intraday_slot": "2026111911",
   "alerted_today": {
     "date": "20261119",
     "codes": [
-      "005430"
+      "005430",
+      "032350",
+      "068270"
     ]
   },
   "last_sent_date": "20261118",
